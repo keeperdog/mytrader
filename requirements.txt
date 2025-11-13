@@ -1,0 +1,8 @@
+akshare
+backtrader
+pandas
+matplotlib
+numpy
+PyQt6
+mplfinance
+mplcursors
