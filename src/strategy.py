@@ -132,11 +132,150 @@ class SmaCrossVolumeStrategy(BaseMultiDataStrategy):
         vol_ok = data.volume[0] > vol_ma[0] * self.p.vol_factor
         return buy_cross, sell_cross, vol_ok
 
+class VolumeSurgeUpStrategy(BaseMultiDataStrategy):
+    """放量上涨策略
+    买入条件(解释与假设):
+      1) 当日涨幅 >= 2% 且 收盘价 >= 开盘价 (原文字 "上涨小于2%或收盘价小于开盘价" 视为排除条件，这里取反作为筛选)
+      2) 当日成交额 >= 2e8 (2亿)
+      3) 当日成交量 / 5日平均成交量 >= 2
+
+    卖出条件(自定义假设):
+      - 收盘价 < 开盘价 (转弱) 或 成交量/5日均量 < 1.2 (放量消失)
+
+    若 5 日均量尚未形成 (前期样本不足)，跳过信号。
+    若成交额缺失，使用 volume * close * 100 作为近似 (假设一手=100)。
+    """
+    params = (('vol_window', 20), ('vol_factor', 1.2))  # 继承仍会创建 vol_ma_map 供基础统计用
+
+    def __init__(self):
+        super().__init__()
+        self.vol_ma5 = {}
+        for d in self.datas:
+            self.vol_ma5[d] = bt.indicators.SimpleMovingAverage(d.volume, period=5)  # type: ignore[attr-defined]
+
+    def per_data_signal(self, data, i):
+        # 前一日收盘是否可用
+        if len(data.close) < 2:
+            return False, False, False
+        prev_close = data.close[-1]
+        if prev_close == 0:
+            return False, False, False
+        pct_change = (data.close[0] - prev_close) / prev_close * 100.0
+        # 成交额 (turnover)
+        try:
+            turnover = data.amount[0]
+        except Exception:
+            # 近似: volume * close * 100
+            turnover = data.volume[0] * data.close[0] * 100.0
+        vol_ma5_val = self.vol_ma5[data][0]
+        if vol_ma5_val == 0:
+            return False, False, False
+        vol_ratio = data.volume[0] / vol_ma5_val
+        increase_ok = (pct_change >= 2.0) and (data.close[0] >= data.open[0])
+        turnover_ok = turnover >= 200_000_000.0
+        vol_surge_ok = vol_ratio >= 2.0
+        buy_sig = increase_ok and turnover_ok and vol_surge_ok
+        # 卖出：价格转弱或放量消退
+        sell_sig = (data.close[0] < data.open[0]) or (vol_ratio < 1.2)
+        vol_ok = turnover_ok and vol_surge_ok
+        return buy_sig, sell_sig, vol_ok
+
+class TarmacPlatformStrategy(BaseMultiDataStrategy):
+    """停机坪形态策略 ("Tarmac" pattern)
+    假设/解释:
+      - 最近15日内第1步描述的"放量上涨"日在当前bar的前3个交易日 (即 index -3)。
+      - 第2步: 紧接的下一个交易日 (index -2) 高开(open > 前一日收盘)、收阳(close > open)、实体占开盘的涨幅 < 3%( (close-open)/open < 3% )。
+      - 第3步: 再后面连续两个交易日 (index -1, index 0) 也满足: 高开、收阳、实体 < 3%、当日涨幅在 0%~5% 内。
+    原文“最近15日有涨幅大于9.5%”理解为形态基准日(第1天)涨幅 > 9.5%，且放量上涨 (volume/5日均量>=2 且 收盘>开盘)。
+    买入时机: 第3个确认日(当前bar)满足所有条件则买入。
+    卖出逻辑(假设): 若出现收盘价<开盘价 或 日内跌幅<-3% 或 日涨幅>6%(形态被打破) 则卖出。
+    可后续参数化：surge_pct, body_pct_limit, confirm_max_pct, confirm_days。
+    """
+    params = (
+        ('surge_pct', 9.5),          # 放量上涨日最低涨幅%
+        ('surge_vol_ratio', 2.0),    # 放量倍率 (volume / ma5)
+        ('body_pct_limit', 3.0),     # 每确认日实体(收-开)/开 < 3%
+        ('confirm_max_pct', 5.0),    # 确认日涨幅上限
+        ('exit_drop_pct', -3.0),     # 跌幅触发退出
+        ('exit_spike_pct', 6.0),     # 异常大涨触发退出 (破形态)
+    )
+
+    def __init__(self):
+        super().__init__()
+        self.vol_ma5 = {}
+        for d in self.datas:
+            self.vol_ma5[d] = bt.indicators.SimpleMovingAverage(d.volume, period=5)  # type: ignore[attr-defined]
+
+    def _daily_pct(self, data, offset=0):
+        if len(data.close) < abs(offset) + 2:
+            return None
+        try:
+            prev = data.close[offset-1]
+            cur = data.close[offset]
+            if prev == 0:
+                return None
+            return (cur - prev) / prev * 100.0
+        except Exception:
+            return None
+
+    def per_data_signal(self, data, i):
+        # 需要至少 4 根K线
+        if len(data.close) < 4:
+            return False, False, False
+        # surge day = index -3
+        surge_pct = self._daily_pct(data, -3)
+        if surge_pct is None:
+            return False, False, False
+        # 5日均量与放量判断 (surge day)
+        try:
+            vol_ma5_surge = self.vol_ma5[data][-3]
+        except Exception:
+            vol_ma5_surge = 0
+        if vol_ma5_surge == 0:
+            return False, False, False
+        vol_ratio_surge = data.volume[-3] / vol_ma5_surge
+        # surge day conditions
+        surge_ok = (
+            surge_pct > self.p.surge_pct and
+            data.close[-3] > data.open[-3] and
+            vol_ratio_surge >= self.p.surge_vol_ratio
+        )
+        if not surge_ok:
+            return False, False, False
+        # 检查接下三个确认日 (index -2, -1, 0)
+        for off in (-2, -1, 0):
+            pct = self._daily_pct(data, off)
+            if pct is None:
+                return False, False, False
+            body_pct = (data.close[off] - data.open[off]) / data.open[off] * 100.0 if data.open[off] != 0 else 0
+            high_open = data.open[off] > data.close[off-1]
+            cond = (
+                high_open and
+                data.close[off] > data.open[off] and
+                body_pct < self.p.body_pct_limit and
+                0.0 < pct <= self.p.confirm_max_pct
+            )
+            if not cond:
+                return False, False, False
+        # 若当前bar通过确认形态，构成买入
+        buy_sig = True
+        # 卖出逻辑
+        today_pct = self._daily_pct(data, 0)
+        sell_sig = False
+        if today_pct is not None:
+            if today_pct < self.p.exit_drop_pct or today_pct > self.p.exit_spike_pct or data.close[0] < data.open[0]:
+                sell_sig = True
+        # 将放量标识 vol_ok 简化为 surge day 的放量满足
+        vol_ok = True
+        return buy_sig, sell_sig, vol_ok
+
 STRATEGY_MAP = {
     'MACD成交量': MacdVolumeStrategy,
     '均线交叉成交量': SmaCrossVolumeStrategy,
+    '放量上涨': VolumeSurgeUpStrategy,
+    '停机坪': TarmacPlatformStrategy,
 }
 
 DEFAULT_STRATEGY_NAME = 'MACD成交量'
 
-__all__ = ['MacdVolumeStrategy', 'SmaCrossVolumeStrategy', 'STRATEGY_MAP', 'DEFAULT_STRATEGY_NAME']
+__all__ = ['MacdVolumeStrategy', 'SmaCrossVolumeStrategy', 'VolumeSurgeUpStrategy', 'TarmacPlatformStrategy', 'STRATEGY_MAP', 'DEFAULT_STRATEGY_NAME']
