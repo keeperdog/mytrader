@@ -27,6 +27,7 @@ class BaseMultiDataStrategy(bt.Strategy):
         self.last_buy_date = {}
         self.vol_ma_map = {}
         self.trade_records = []  # 记录每笔交易明细
+        self.pos_history = []    # 记录每日持仓 (date, 每标的持仓数量)
         for d in self.datas:
             self.last_buy_price[d] = None
             self.last_buy_date[d] = None
@@ -70,6 +71,16 @@ class BaseMultiDataStrategy(bt.Strategy):
                     })
                     self.last_buy_price[d] = None
                     self.last_buy_date[d] = None
+        # 记录当日持仓
+        try:
+            cur_date = bt.num2date(self.datas[0].datetime[0]).date()
+            pos_row = {'date': cur_date}
+            for j, d in enumerate(self.datas):
+                key = d._name or f'data{j}'
+                pos_row[key] = self.getposition(d).size
+            self.pos_history.append(pos_row)
+        except Exception:
+            pass
 
     def stop(self):
         # 统计未平仓

@@ -21,12 +21,9 @@ import matplotlib
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 try:
-    from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
+    from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
 except Exception:  # fallback for backend differences
-    try:
-        from matplotlib.backends.backend_qt import NavigationToolbar2QT as NavigationToolbar
-    except Exception:
-        NavigationToolbar = None
+    NavigationToolbar = None
 from matplotlib import patches
 import mplcursors
 
@@ -177,8 +174,9 @@ class MainWindow(QMainWindow):
         chart_layout.addWidget(self.canvas)
         # 添加 Matplotlib 工具栏，支持放大/缩小/平移/保存
         try:
-            toolbar = NavigationToolbar(self.canvas, self)
-            chart_layout.addWidget(toolbar)
+            if NavigationToolbar is not None:
+                toolbar = NavigationToolbar(self.canvas, self)
+                chart_layout.addWidget(toolbar)
         except Exception:
             pass
 
@@ -347,7 +345,12 @@ class MainWindow(QMainWindow):
         ax_macd = self.fig.add_subplot(gs[1], sharex=ax_price)  # 中间：MACD 柱
         ax_vol = self.fig.add_subplot(gs[2], sharex=ax_price)   # 底部：Vol 柱
 
-        ax_price.set_title("K线")
+        # 左上角显示主图股票名称与编码（当前选择）
+        primary_combo = getattr(self, 'primary_combo', None)
+        first_name = primary_combo.currentText() if primary_combo is not None else '主图'
+        ax_price.set_title("")
+        ax_price.text(0.01, 0.98, first_name, transform=ax_price.transAxes,
+                      ha='left', va='top', fontsize=12, color='#333', fontweight='bold')
         # 绘制蜡烛
         width = 0.6
         for pos, (idx, row) in enumerate(ohlc_df.iterrows()):
@@ -359,26 +362,27 @@ class MainWindow(QMainWindow):
         ax_price.set_xlim(-1, len(ohlc_df))
         ax_price.tick_params(axis='x', labelbottom=False)
 
-        # 买卖点标注（仅第一标的）
-        # 买卖点标注（仅当前主图标的）+ hover 展示交易信息
+        # 买卖点标注（当前主图标的）并构建统一悬浮信息（交易摘要），避免多个浮窗
+        trade_map = {}
         try:
-            primary_combo = getattr(self, 'primary_combo', None)
-            first_name = primary_combo.currentText() if primary_combo is not None else None
             if first_name and not trades_df.empty and 'symbol' in trades_df.columns:
                 pos_map = {pd.Timestamp(d): i for i, d in enumerate(ohlc_df['date'])}
                 sub = trades_df[trades_df['symbol'] == first_name].copy()
-                buy_x, buy_y, buy_txt = [], [], []
-                sell_x, sell_y, sell_txt = [], [], []
+                buy_x, buy_y = [], []
+                sell_x, sell_y = [], []
                 for _, t in sub.iterrows():
-                    entry_date = pd.to_datetime(t.get('entry_date')) if pd.notna(t.get('entry_date')) else None
-                    exit_date = pd.to_datetime(t.get('exit_date')) if pd.notna(t.get('exit_date')) else None
+                    entry_raw = t.get('entry_date', None)
+                    exit_raw = t.get('exit_date', None)
+                    entry_date = pd.Timestamp(entry_raw) if (entry_raw is not None and pd.notna(entry_raw)) else None
+                    exit_date = pd.Timestamp(exit_raw) if (exit_raw is not None and pd.notna(exit_raw)) else None
                     size = t.get('size', '')
                     if entry_date is not None and entry_date in pos_map:
                         i_buy = pos_map[entry_date]
                         buy_x.append(i_buy)
                         buy_y.append(float(ohlc_df['close'].iloc[i_buy]))
                         ep = t.get('entry_price', None)
-                        buy_txt.append(f"买入 {first_name}\n日期:{entry_date.date()}\n价格:{ep:.2f} 数量:{size}" if ep is not None else f"买入 {first_name}\n日期:{entry_date.date()} 数量:{size}")
+                        rec = f"买入 价:{ep:.2f} 数量:{size}" if ep is not None else f"买入 数量:{size}"
+                        trade_map.setdefault(entry_date.date(), []).append(rec)
                     if exit_date is not None and exit_date in pos_map:
                         i_sell = pos_map[exit_date]
                         sell_x.append(i_sell)
@@ -386,29 +390,12 @@ class MainWindow(QMainWindow):
                         xp = t.get('exit_price', None)
                         pnl = t.get('pnl_pct', None)
                         pnl_txt = f" 收益:{pnl*100:.2f}%" if pnl is not None else ""
-                        sell_txt.append(f"卖出 {first_name}\n日期:{exit_date.date()}\n价格:{xp:.2f}{pnl_txt}" if xp is not None else f"卖出 {first_name}\n日期:{exit_date.date()}{pnl_txt}")
+                        rec2 = f"卖出 价:{xp:.2f}{pnl_txt}" if xp is not None else f"卖出{pnl_txt}"
+                        trade_map.setdefault(exit_date.date(), []).append(rec2)
                 if buy_x:
-                    buy_sc = ax_price.scatter(buy_x, buy_y, marker='^', color='#2ca02c', s=50, zorder=5)
-                    try:
-                        cur = mplcursors.cursor(buy_sc, hover=True)
-                        @cur.connect("add")
-                        def _on_buy(sel):
-                            idx = int(getattr(sel, 'index', 0) or 0)
-                            idx = max(0, min(idx, len(buy_txt)-1))
-                            sel.annotation.set(text=buy_txt[idx])
-                    except Exception:
-                        pass
+                    ax_price.scatter(buy_x, buy_y, marker='^', color='#2ca02c', s=50, zorder=5)
                 if sell_x:
-                    sell_sc = ax_price.scatter(sell_x, sell_y, marker='v', color='#d64f4f', s=50, zorder=5)
-                    try:
-                        cur2 = mplcursors.cursor(sell_sc, hover=True)
-                        @cur2.connect("add")
-                        def _on_sell(sel):
-                            idx = int(getattr(sel, 'index', 0) or 0)
-                            idx = max(0, min(idx, len(sell_txt)-1))
-                            sel.annotation.set(text=sell_txt[idx])
-                    except Exception:
-                        pass
+                    ax_price.scatter(sell_x, sell_y, marker='v', color='#d64f4f', s=50, zorder=5)
         except Exception:
             pass
 
@@ -432,7 +419,7 @@ class MainWindow(QMainWindow):
         ax_vol.set_xticks(range(0, len(ohlc_df), step))
         ax_vol.set_xticklabels([show_dates[i] for i in range(0, len(ohlc_df), step)], rotation=45, fontsize=8)
 
-        # Hover：在 K 线上增加一条透明线以支持悬停（中文 OHLC）
+        # Hover：单一浮窗（日期+OHLC+当日交易摘要），不再为买卖点单独弹窗
         try:
             import numpy as np
             x_idx = np.arange(len(ohlc_df))
@@ -457,7 +444,11 @@ class MainWindow(QMainWindow):
                     idx = int(np.argmin(np.abs(xv - tx)))
                 d = ohlc_df['date'].iloc[idx]
                 o = ohlc_df['open'].iloc[idx]; h = ohlc_df['high'].iloc[idx]; l = ohlc_df['low'].iloc[idx]; c = ohlc_df['close'].iloc[idx]
-                sel.annotation.set(text=f"{pd.to_datetime(d).date()}\n开:{o:.2f} 高:{h:.2f} 低:{l:.2f} 收:{c:.2f}")
+                base_txt = f"{pd.to_datetime(d).date()}\n开:{o:.2f} 高:{h:.2f} 低:{l:.2f} 收:{c:.2f}"
+                trades_today = trade_map.get(pd.to_datetime(d).date(), [])
+                if trades_today:
+                    base_txt += "\n" + " | ".join(trades_today)
+                sel.annotation.set(text=base_txt)
         except Exception:
             pass
 
@@ -534,8 +525,23 @@ class MainWindow(QMainWindow):
                 buys_txt = ("买:" + ",".join(buys)) if buys else ""
                 sells_txt = ("卖:" + ",".join(sells)) if sells else ""
                 trade_txt = (buys_txt + (" " if buys_txt and sells_txt else "") + sells_txt).strip()
-                if trade_txt:
+                # 持仓信息：从 equity_curve 的同名列读取非零持仓
+                holding_parts = []
+                try:
+                    for sym in getattr(self, 'last_selected_names', []):
+                        if sym in equity_curve.columns:
+                            size = equity_curve[sym].iloc[idx]
+                            if size and float(size) != 0.0:
+                                holding_parts.append(f"{sym}:{int(size)}")
+                except Exception:
+                    pass
+                holding_txt = ("持仓:" + ",".join(holding_parts)) if holding_parts else ""
+                if trade_txt and holding_txt:
+                    sel.annotation.set(text=f"{hover_date}\n净值:{val:.2f}\n收益:{pct:.2f}%\n{trade_txt}\n{holding_txt}")
+                elif trade_txt:
                     sel.annotation.set(text=f"{hover_date}\n净值:{val:.2f}\n收益:{pct:.2f}%\n{trade_txt}")
+                elif holding_txt:
+                    sel.annotation.set(text=f"{hover_date}\n净值:{val:.2f}\n收益:{pct:.2f}%\n{holding_txt}")
                 else:
                     sel.annotation.set(text=f"{hover_date}\n净值:{val:.2f}\n收益:{pct:.2f}%")
         except Exception:

@@ -82,6 +82,17 @@ def run_backtest(dfs: List[pd.DataFrame], strategy_name: str | None = None, disp
     equity_curve_df = pd.merge(equity_curve_df, base[['date', 'benchmark']], on='date', how='right')
     equity_curve_df['value'] = equity_curve_df['value'].ffill()
 
+    # 合并持仓历史到 equity_curve
+    pos_history = getattr(strat, 'pos_history', [])
+    if pos_history:
+        pos_df = pd.DataFrame(pos_history)
+        pos_df['date'] = pd.to_datetime(pos_df['date'])
+        equity_curve_df = equity_curve_df.merge(pos_df, on='date', how='left')
+        # 缺失填 0
+        for col in pos_df.columns:
+            if col != 'date':
+                equity_curve_df[col] = equity_curve_df[col].fillna(0)
+
     metrics = {
         '总收益率': total_return,
         '年化收益率': annual_return,
