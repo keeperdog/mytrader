@@ -1,0 +1,18 @@
+name = "优选一"
+symbols = [ "159509.SZ", "518880.SH", "512480.SH", "159531.SZ", "513100.SH", "513520.SH", "159857.SZ", "512100.SH", "510180.SH", "588000.SH", "513330.SH", "162719.SZ", "513500.SH", "159915.SZ",]
+start_date = "20100101"
+end_date = "20250513"
+benchmark = "510300.SH"
+select = "SelectAll"
+select_buy = []
+buy_at_least_count = 1
+select_sell = [ "roc(close, 21)> 0.18",]
+sell_at_least_count = 1
+order_by_signal = "trend_score(close,25)*0.4+(roc(close,5)+roc(close,10))*0.2+ma(volume,5)/ma(volume,20)"
+order_by_topK = 1
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunDaily"
+
+[weight_fixed]

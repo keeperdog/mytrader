@@ -1,0 +1,18 @@
+name = "年化收益斜率修正+止盈策略"
+symbols = [ "159915.SZ", "518880.SH", "513100.SH", "159985.SZ", "510300.SH", "160723.SZ",]
+start_date = "20100101"
+end_date = "20250515"
+benchmark = "510300.SH"
+select = "SelectAll"
+select_buy = []
+buy_at_least_count = 1
+select_sell = [ "roc(close,21)>0.17",]
+sell_at_least_count = 1
+order_by_signal = "trend_score(close,25)"
+order_by_topK = 1
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunDaily"
+
+[weight_fixed]

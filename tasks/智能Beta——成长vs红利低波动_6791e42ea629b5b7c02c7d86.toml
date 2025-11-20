@@ -1,0 +1,19 @@
+name = "智能Beta——成长vs红利低波动"
+symbols = [ "159905.SZ", "159967.SZ",]
+start_date = "20100101"
+end_date = "20250503"
+benchmark = "510300.SH"
+select = "SelectAll"
+select_buy = [ "roc(close,21)>0.02",]
+buy_at_least_count = 1
+select_sell = [ "roc(close,21)<-0.02",]
+sell_at_least_count = 1
+order_by_signal = "roc(close,21)"
+order_by_topK = 1
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunDaily"
+period_days = 1
+
+[weight_fixed]

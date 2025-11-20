@@ -1,0 +1,19 @@
+name = "中规模轮动"
+symbols = [ "513580.SH", "516510.SH", "588000.SH", "159819.SZ", "515030.SH", "159985.SZ", "512480.SH", "512690.SH", "161128.SZ", "159949.SZ", "513100.SH", "162411.SZ",]
+start_date = "20200101"
+end_date = "20250503"
+benchmark = "510300.SH"
+select = "SelectAll"
+select_buy = [ "roc(close,21)>0.05",]
+buy_at_least_count = 1
+select_sell = [ "roc(close,21)<-0.06", "roc(close, 21)> 0.20",]
+sell_at_least_count = 1
+order_by_signal = " roc(close,21)"
+order_by_topK = 2
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunDaily"
+period_days = 1
+
+[weight_fixed]

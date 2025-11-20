@@ -1,0 +1,18 @@
+name = "双动量"
+symbols = [ "159915.SZ", "513100.SH",]
+start_date = "20100101"
+end_date = "20250429"
+benchmark = "159915.SZ"
+select = "SelectAll"
+select_buy = [ "roc(close,20)>0.001",]
+buy_at_least_count = 1
+select_sell = [ "roc(close,20)<-0.001",]
+sell_at_least_count = 1
+order_by_signal = "roc(close,20)"
+order_by_topK = 1
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunDaily"
+
+[weight_fixed]

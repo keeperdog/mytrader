@@ -1,0 +1,18 @@
+name = "大资产波动轮动策略"
+symbols = [ "159915.SZ", "159509.SZ", "159934.SZ", "159531.SZ", "513100.SH", "513520.SH", "512100.SH", "513500.SH", "588000.SH", "159813.SZ", "162719.SZ", "513330.SH", "159792.SZ",]
+start_date = "20100101"
+end_date = "20250501"
+benchmark = "510300.SH"
+select = "SelectAll"
+select_buy = []
+buy_at_least_count = 1
+select_sell = [ "roc(close,18)>0.15",]
+sell_at_least_count = 1
+order_by_signal = "trend_score(close,26)*0.4+(roc(close,5)+roc(close,10))*0.2+ma(volume,5)/ma(volume,20)"
+order_by_topK = 1
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunDaily"
+
+[weight_fixed]

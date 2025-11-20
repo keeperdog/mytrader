@@ -1,8 +1,10 @@
 akshare
-backtrader
-pandas
+wxpython
+toml
+empyrical
+loguru
+lightweight-charts
+yfinance
 matplotlib
-numpy
-PyQt6
-mplfinance
-mplcursors
+seaborn
+ipython

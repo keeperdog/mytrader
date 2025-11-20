@@ -1,0 +1,19 @@
+name = "国内版本全天候风险平价【等权重版本】"
+symbols = [ "161716.SZ", "511220.SH", "512010.SH", "159928.SZ", "518880.SH", "513100.SH", "511010.SH", "510050.SH",]
+start_date = "20100101"
+end_date = "20250429"
+benchmark = "510300.SH"
+select = "SelectAll"
+select_buy = []
+buy_at_least_count = 1
+select_sell = []
+sell_at_least_count = 1
+order_by_signal = ""
+order_by_topK = 1
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunQuarterly"
+period_days = 1
+
+[weight_fixed]

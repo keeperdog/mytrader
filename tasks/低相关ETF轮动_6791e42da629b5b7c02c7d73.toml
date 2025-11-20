@@ -1,0 +1,19 @@
+name = "低相关ETF轮动"
+symbols = [ "515220.SH", "159985.SZ", "512100.SH", "513030.SH", "513100.SH", "510880.SH",]
+start_date = "20180101"
+end_date = "20250503"
+benchmark = "510300.SH"
+select = "SelectAll"
+select_buy = [ "roc(close,20)>0.05",]
+buy_at_least_count = 1
+select_sell = [ "roc(close,20)>0.2",]
+sell_at_least_count = 1
+order_by_signal = "roc(close,20)"
+order_by_topK = 1
+order_by_dropN = 0
+order_by_DESC = true
+weight = "WeighEqually"
+period = "RunDaily"
+period_days = 1
+
+[weight_fixed]

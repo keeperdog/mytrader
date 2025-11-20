@@ -1,3 +1,7 @@
+# AITrader 智能量化投研平台 GUI (wxPython 版本)
+
+> 当前分支提供基于 **wxPython** 的桌面 GUI，实现示例策略回测结果的四块展示：`历史表现`、`当前持仓`、`历史交易`、`调仓信号`。运行 `python main.py` 即可体验。原始 PyQt6 MVP 说明保留在下方，便于后续迁移或对比。
+
 # 量化回测 MVP (PyQt6 + Backtrader + Akshare)
 
 ## 功能概述
@@ -21,6 +25,9 @@ pip install -r requirements.txt
 
 ```bash
 conda activate mytrader
+# wxPython 版本入口（本分支新增）
+python main.py
+
 # 推荐方式（包运行，避免相对导入问题）
 python -m src.main
 # 若使用脚本直接运行也已兼容：
@@ -42,6 +49,21 @@ python -m src.main
    - “数据区”显示指标表格，可选中复制。
 4. 再次修改参数后重新点击“开始回测”即可重复测试。
 
+### wxPython 版本界面说明
+
+左侧：策略选择（自动读取 `tasks/*.toml`）、日期范围、基准指数、启动/停止回测。
+
+中央：Notebook 四个标签页
+
+- 历史表现：嵌入 Matplotlib，展示策略与基准的净值曲线。
+- 当前持仓：`ListCtrl` 表格，显示代码 / 名称 / 仓位%。
+- 历史交易：表格列出买入价、卖出价、盈亏、持仓天数与收益率。
+- 调仓信号：表格列出信号日期、代码、操作类型（开仓/平仓）、起始与目标仓位。
+
+底部：日志窗口，可清空与保存。
+
+示例数据由 `gui/data_models.py::load_sample_result` 生成，后续接入真实回测时只需替换该函数，或直接将 `BacktestResult` 以同结构填充后调用 `MainFrame.update_views()`。
+
 ## 策略逻辑
 
 - 买入：MACD DIF 上穿 DEA (金叉) 且当日成交量 > 近 20 日均量 \* 1.2 → 满仓。
@@ -53,6 +75,7 @@ python -m src.main
 - 新增标的：编辑 `data_loader.py` 中 `NORMALIZED_OPTIONS` 与映射字典。
 - 策略调参：在 `strategy.py` 中修改 `vol_window`、`vol_factor` 或新增条件。
 - 增加指标：在 `backtest.py` 中扩展分析器 / 计算逻辑，再在 GUI `update_table` 中展示。
+- wxPython 回测接入：实现真实回测后，在启动按钮事件中替换示例 `load_sample_result()` 为实际函数，并将结果封装为 `BacktestResult`。
 
 ## 常见问题
 
