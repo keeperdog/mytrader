@@ -289,4 +289,186 @@ STRATEGY_MAP = {
 
 DEFAULT_STRATEGY_NAME = 'MACD成交量'
 
-__all__ = ['MacdVolumeStrategy', 'SmaCrossVolumeStrategy', 'VolumeSurgeUpStrategy', 'TarmacPlatformStrategy', 'STRATEGY_MAP', 'DEFAULT_STRATEGY_NAME']
+class MidCapRotationStrategy(bt.Strategy):
+    """中规模轮动策略 (示例实现)
+    参数来源: 用户给出的配置
+    逻辑:
+      - 计算 ROC(period) = close / close[-period] - 1
+      - 买入条件: roc(period) > buy_thr (任意满足 buy 条件列表计数>=buy_at_least_count)
+      - 卖出条件: roc(period) < sell_thr_low 或 roc(period) > sell_thr_high (卖出条件列表满足>=sell_at_least_count)
+      - 每个 rebal_days 日进行一次轮动 (period = RunDaily, period_days=1 -> 每日)
+      - 排序: 按 roc(period) DESC，选 topK (去掉 dropN 前N个后再选 topK)
+      - 权重: 等权 (WeighEqually)
+    简化:
+      - 不额外考虑手续费滑点，此处留给 broker 配置
+      - 若样本不足 (len < roc_period+1) 则该标的跳过当前 bar 计算
+    输出:
+      - trade_records (与其它策略一致)
+      - pos_history (每日持仓快照)
+    """
+    params = dict(
+        roc_period=21,
+        buy_conditions=(0.05,),          # 表示 roc > 0.05 (可扩展多个条件 OR)
+        buy_at_least_count=1,
+        sell_conditions_low=(-0.06,),    # roc < -0.06 OR
+        sell_conditions_high=(0.20,),    # roc > 0.20 OR
+        sell_at_least_count=1,
+        topK=2,
+        dropN=0,
+        rebalance_days=1,                # 每 N 天轮动
+    )
+
+    def __init__(self):
+        self.day_counter = 0
+        self.trade_records = []
+        self.pos_history = []
+        # 保存最近买入价用于胜率统计 (简化)
+        self.last_buy_price = {d: None for d in self.datas}
+        self.last_buy_date = {d: None for d in self.datas}
+        self.trades = 0
+        self.wins = 0
+
+    def _roc(self, data, period):
+        if len(data.close) <= period:
+            return None
+        prev = data.close[-period]
+        cur = data.close[0]
+        if prev == 0:
+            return None
+        return cur / prev - 1.0
+
+    def next(self):
+        self.day_counter += 1
+        current_date = bt.num2date(self.datas[0].datetime[0]).date()
+
+        # 计算所有标的 ROC
+        roc_map = {}
+        for d in self.datas:
+            roc_val = self._roc(d, self.p.roc_period)
+            if roc_val is not None:
+                roc_map[d] = roc_val
+
+        # 卖出检查 (逐标的)
+        for d in list(self.datas):
+            pos = self.getposition(d)
+            if pos.size == 0:
+                continue
+            roc_val = roc_map.get(d, None)
+            if roc_val is None:
+                continue
+            sell_hits = 0
+            for low_thr in self.p.sell_conditions_low:
+                if roc_val < low_thr:
+                    sell_hits += 1; break
+            for high_thr in self.p.sell_conditions_high:
+                if roc_val > high_thr:
+                    sell_hits += 1; break
+            if sell_hits >= self.p.sell_at_least_count:
+                self.order_target_percent(d, 0.0)
+                entry_price = self.last_buy_price.get(d)
+                exit_price = d.close[0]
+                entry_date = self.last_buy_date.get(d)
+                exit_date = current_date
+                pnl_pct = (exit_price - entry_price)/entry_price if entry_price else 0.0
+                holding_days = (exit_date - entry_date).days if entry_date else 0
+                self.trade_records.append({
+                    'symbol': d._name or 'unknown',
+                    'entry_date': entry_date,
+                    'exit_date': exit_date,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'size': pos.size,
+                    'pnl_pct': pnl_pct,
+                    'holding_days': holding_days,
+                })
+                self.trades += 1
+                if entry_price is not None and exit_price > entry_price:
+                    self.wins += 1
+                self.last_buy_price[d] = None
+                self.last_buy_date[d] = None
+
+        # 轮动买入 (按 rebalance_days)
+        if self.day_counter % self.p.rebalance_days == 0 and roc_map:
+            # 构建买入候选列表
+            candidates = []
+            for d, roc_val in roc_map.items():
+                buy_hits = sum(1 for cond in self.p.buy_conditions if roc_val > cond)
+                if buy_hits >= self.p.buy_at_least_count:
+                    candidates.append((d, roc_val))
+            # 排序 & 选 topK
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            if self.p.dropN > 0:
+                candidates = candidates[self.p.dropN:]
+            target = [c[0] for c in candidates[: self.p.topK]]
+            target_set = set(target)
+            # 当前持仓集合
+            held_set = {d for d in self.datas if self.getposition(d).size > 0}
+            # 卸载不在目标内的持仓
+            for d in held_set - target_set:
+                self.order_target_percent(d, 0.0)
+                pos = self.getposition(d)
+                entry_price = self.last_buy_price.get(d)
+                exit_price = d.close[0]
+                entry_date = self.last_buy_date.get(d)
+                exit_date = current_date
+                pnl_pct = (exit_price - entry_price)/entry_price if entry_price else 0.0
+                holding_days = (exit_date - entry_date).days if entry_date else 0
+                self.trade_records.append({
+                    'symbol': d._name or 'unknown',
+                    'entry_date': entry_date,
+                    'exit_date': exit_date,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'size': pos.size,
+                    'pnl_pct': pnl_pct,
+                    'holding_days': holding_days,
+                })
+                self.trades += 1
+                if entry_price is not None and exit_price > entry_price:
+                    self.wins += 1
+                self.last_buy_price[d] = None
+                self.last_buy_date[d] = None
+            # 买入新的目标
+            if target:
+                weight = 1.0 / len(target)
+                for d in target:
+                    if self.getposition(d).size == 0:
+                        self.order_target_percent(d, weight)
+                        self.last_buy_price[d] = d.close[0]
+                        self.last_buy_date[d] = current_date
+
+        # 记录持仓快照
+        snapshot = {'date': current_date}
+        for d in self.datas:
+            snapshot[d._name or 'unknown'] = self.getposition(d).size
+        self.pos_history.append(snapshot)
+
+    def stop(self):
+        # 强制平仓剩余持仓（统计）
+        current_date = bt.num2date(self.datas[0].datetime[0]).date() if self.datas else None
+        for d in self.datas:
+            pos = self.getposition(d)
+            if pos.size > 0 and self.last_buy_price.get(d) is not None:
+                exit_price = d.close[0]
+                entry_price = self.last_buy_price[d]
+                entry_date = self.last_buy_date[d]
+                exit_date = current_date
+                pnl_pct = (exit_price - entry_price)/entry_price if entry_price else 0.0
+                holding_days = (exit_date - entry_date).days if entry_date else 0
+                self.trade_records.append({
+                    'symbol': d._name or 'unknown',
+                    'entry_date': entry_date,
+                    'exit_date': exit_date,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'size': pos.size,
+                    'pnl_pct': pnl_pct,
+                    'holding_days': holding_days,
+                })
+                self.trades += 1
+                if entry_price is not None and exit_price > entry_price:
+                    self.wins += 1
+
+STRATEGY_MAP['中规模轮动'] = MidCapRotationStrategy
+
+__all__ = ['MacdVolumeStrategy', 'SmaCrossVolumeStrategy', 'VolumeSurgeUpStrategy', 'TarmacPlatformStrategy', 'MidCapRotationStrategy', 'STRATEGY_MAP', 'DEFAULT_STRATEGY_NAME']

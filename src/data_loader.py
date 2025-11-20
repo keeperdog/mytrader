@@ -96,5 +96,46 @@ def compute_macd(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 __all__ = [
-    'get_stock_data', 'compute_macd', 'NORMALIZED_OPTIONS'
+    'get_stock_data', 'compute_macd', 'NORMALIZED_OPTIONS', 'get_generic_hist'
 ]
+
+def get_generic_hist(symbol: str, start: str, end: str) -> pd.DataFrame:
+    """通用代码历史数据获取 (股票/ETF 兼容尝试)
+
+    参数:
+        symbol: 形如 513580.SH / 510300.SH / 600383.SH / 159819.SZ 等
+        start, end: YYYYMMDD 或 YYYY-MM-DD (自动去除 '-')
+    返回: DataFrame[date, open, high, low, close, volume, amount]
+
+    逻辑:
+        1. 去掉交易所后缀 (.SH / .SZ)
+        2. 优先尝试 ETF 接口 fund_etf_hist_em
+        3. 失败则回退 stock_zh_a_hist (若是股票)
+    """
+    import re
+    import akshare as ak
+    s_clean = symbol.upper().strip()
+    s_clean = re.sub(r"\.SH$|\.SZ$", "", s_clean)
+    start_fmt = start.replace('-', '')
+    end_fmt = end.replace('-', '')
+    df = None
+    # 尝试 ETF
+    try:
+        df = ak.fund_etf_hist_em(symbol=s_clean)
+        if df is not None and not df.empty:
+            df = df.rename(columns={'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'})
+    except Exception:
+        df = None
+    # 若为空再尝试 A 股股票日线
+    if df is None or df.empty:
+        try:
+            df = ak.stock_zh_a_hist(symbol=s_clean, period='daily', start_date=start_fmt, end_date=end_fmt, adjust='qfq')
+            if df is not None and not df.empty:
+                df = df.rename(columns={'日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume', '成交额': 'amount'})
+        except Exception:
+            df = None
+    if df is None or df.empty:
+        raise RuntimeError(f"无法获取数据: {symbol}")
+    df['date'] = pd.to_datetime(df['date'])
+    df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']].sort_values('date').reset_index(drop=True)
+    return df
