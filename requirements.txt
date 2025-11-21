@@ -1,10 +1,5 @@
 akshare
-wxpython
-toml
-empyrical
-loguru
-lightweight-charts
 yfinance
+wxpython
 matplotlib
-seaborn
-ipython
+mplcursors

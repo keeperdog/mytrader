@@ -11,6 +11,8 @@ from gui.data_models import BacktestResult, load_sample_result
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib
+import matplotlib.dates as mdates
+import mplcursors
 matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS']
 matplotlib.rcParams['axes.unicode_minus'] = False
 
@@ -35,15 +37,56 @@ class PerformancePanel(wx.Panel):
         self.ax.clear()
         if not result.performance:
             self.ax.text(0.5, 0.5, '暂无绩效数据', ha='center', va='center', fontsize=12)
-        else:
-            dates = [p['date'] for p in result.performance]
-            strat = [p['strategy_nav'] for p in result.performance]
-            bench = [p['benchmark_nav'] for p in result.performance]
-            self.ax.plot(dates, strat, label='策略')
-            self.ax.plot(dates, bench, label='基准')
-            self.ax.set_title('策略与基准表现对比')
-            self.ax.legend()
+            self.canvas.draw()
+            return
+
+        dates = [p['date'] for p in result.performance]
+        strat = [p['strategy_nav'] for p in result.performance]
+        bench = [p['benchmark_nav'] for p in result.performance]
+        line_strat, = self.ax.plot(dates, strat, label='策略')
+        line_bench, = self.ax.plot(dates, bench, label='基准')
+        self.ax.set_title('策略与基准表现对比')
+        self.ax.legend()
         self.figure.tight_layout()
+
+        # 设置悬停提示：显示日期 + 两条曲线的相对百分比（相对首日）
+        base_strat = strat[0]
+        base_bench = bench[0]
+        lines = [line_strat, line_bench]
+        # 清除旧 cursor 避免重复事件
+        if hasattr(self, 'cursor') and self.cursor:
+            try:
+                self.cursor.disconnect('add')
+            except Exception:
+                pass
+        self.cursor = mplcursors.cursor(lines, hover=True)
+
+        def _fmt(sel):
+            line = sel.artist
+            x = sel.target[0]
+            xdata = line.get_xdata()
+            # 将 xdata 转为 matplotlib 的数值（float days）以便比较
+            try:
+                xnums = mdates.date2num(xdata)
+            except Exception:
+                # 如果 xdata 已经是数值，直接使用
+                xnums = xdata
+            # 找最近点索引（比较数值）
+            idx = min(range(len(xnums)), key=lambda i: abs(xnums[i] - x))
+            # 获取对应日期并格式化
+            try:
+                date_dt = mdates.num2date(xnums[idx]).date()
+            except Exception:
+                # 兜底：如果原始 dates 列表可用，直接取
+                date_dt = dates[idx]
+            pct_strat = (strat[idx] / base_strat - 1) * 100
+            pct_bench = (bench[idx] / base_bench - 1) * 100
+            text = f"{date_dt:%Y-%m-%d}\n策略  {pct_strat:.1f}%\n基准  {pct_bench:.1f}%"
+            sel.annotation.set_text(text)
+            sel.annotation.get_bbox_patch().set(fc='#ffffff', alpha=0.9)
+            sel.annotation.arrow_patch.set(visible=False)
+
+        self.cursor.connect('add', _fmt)
         self.canvas.draw()
 
 
